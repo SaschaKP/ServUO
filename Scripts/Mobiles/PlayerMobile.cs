@@ -646,8 +646,11 @@ namespace Server.Mobiles
 		[CommandProperty(AccessLevel.GameMaster)]
 		public DateTime AnkhNextUse { get { return m_AnkhNextUse; } set { m_AnkhNextUse = value; } }
 
-		#region Mondain's Legacy
-		[CommandProperty(AccessLevel.GameMaster)]
+        [CommandProperty(AccessLevel.GameMaster)]
+        public DateTime NextGemOfSalvationUse { get; set; }
+
+        #region Mondain's Legacy
+        [CommandProperty(AccessLevel.GameMaster)]
 		public bool Bedlam { get { return GetFlag(PlayerFlag.Bedlam); } set { SetFlag(PlayerFlag.Bedlam, value); } }
 
 		[CommandProperty(AccessLevel.GameMaster)]
@@ -1211,7 +1214,7 @@ namespace Server.Mobiles
         {
             int resistance = base.GetResistance(type) + SphynxFortune.GetResistanceBonus(this, type);
 
-            if (Server.Engines.CityLoyalty.CityLoyaltySystem.HasTradeDeal(this, Server.Engines.CityLoyalty.TradeDeal.SocietyOfClothiers))
+            if (CityLoyaltySystem.HasTradeDeal(this, TradeDeal.SocietyOfClothiers))
             {
                 resistance++;
                  return Math.Min(resistance, GetMaxResistance(type));
@@ -1637,7 +1640,7 @@ namespace Server.Mobiles
             if (pm.AcceleratedStart > DateTime.UtcNow)
 			{
 				pm.AcceleratedStart = DateTime.UtcNow;
-				ScrollofAlacrity.AlacrityEnd(pm);
+                ScrollOfAlacrity.AlacrityEnd(pm);
 			}
 			#endregion
 
@@ -2024,7 +2027,9 @@ namespace Server.Mobiles
 			{
 				if (Core.ML && IsPlayer())
 				{
-					return Math.Min(base.Str, StrMaxCap);
+                    var str = base.Str;
+
+                    return Math.Min(base.Str, StrMaxCap);
 				}
 
 				return base.Str;
@@ -2054,7 +2059,9 @@ namespace Server.Mobiles
 			{
 				if (Core.ML && IsPlayer())
 				{
-					return Math.Min(base.Dex, DexMaxCap);
+                    var dex = base.Dex;
+
+                    return Math.Min(dex, DexMaxCap);
 				}
 
 				return base.Dex;
@@ -2655,7 +2662,7 @@ namespace Server.Mobiles
             }
         }
 
-        public static int GetInsuranceCost(Item item)
+        public int GetInsuranceCost(Item item)
         {
             var imbueWeight = Imbuing.GetTotalWeight(item);
             int cost = 600; // this handles old items, set items, etc
@@ -2667,12 +2674,15 @@ namespace Server.Mobiles
             else if (Mobiles.GenericBuyInfo.BuyPrices.ContainsKey(item.GetType()))
                 cost = Math.Min(800, Math.Max(10, Mobiles.GenericBuyInfo.BuyPrices[item.GetType()]));
             else if (item.LootType == LootType.Newbied)
-                return 10;
+                cost = 10;
 
             var negAttrs = RunicReforging.GetNegativeAttributes(item);
 
             if (negAttrs != null && negAttrs.Prized > 0)
                 cost *= 2;
+
+            if (Region != null)
+                cost = (int)(cost * Region.InsuranceMultiplier);
 
             return cost;
         }
@@ -2825,6 +2835,9 @@ namespace Server.Mobiles
 
         private bool DisplayInItemInsuranceGump(Item item)
         {
+            if (item.Parent is LockableContainer && ((LockableContainer)item.Parent).Locked)
+                return false;
+
             return ((item.Visible || AccessLevel >= AccessLevel.GameMaster) && (item.Insured || CanInsure(item)));
         }
 
@@ -2890,7 +2903,7 @@ namespace Server.Mobiles
                 for (int i = 0; i < items.Length; ++i)
                 {
                     if (insure[i])
-                        cost += GetInsuranceCost(items[i]);
+                        cost += m_From.GetInsuranceCost(items[i]);
                 }
 
                 AddHtmlLocalized(15, 420, 300, 20, 1114310, 0x7FFF, false, false); // GOLD AVAILABLE:
@@ -2915,12 +2928,12 @@ namespace Server.Mobiles
                     if (insure[i])
                     {
                         AddButton(400, y, 9723, 9724, 100 + i, GumpButtonType.Reply, 0);
-                        AddLabel(250, y, 0x481, GetInsuranceCost(item).ToString());
+                        AddLabel(250, y, 0x481, m_From.GetInsuranceCost(item).ToString());
                     }
                     else
                     {
                         AddButton(400, y, 9720, 9722, 100 + i, GumpButtonType.Reply, 0);
-                        AddLabel(250, y, 0x66C, GetInsuranceCost(item).ToString());
+                        AddLabel(250, y, 0x66C, m_From.GetInsuranceCost(item).ToString());
                     }
                 }
 
@@ -3379,7 +3392,10 @@ namespace Server.Mobiles
 
 			if (msgNum == 1154111)
 			{
-				SendLocalizedMessage(msgNum, RawName);
+                if (to != null)
+                {
+                    SendLocalizedMessage(msgNum, to.Name);
+                }
 			}
 			else
 			{
@@ -3830,7 +3846,7 @@ namespace Server.Mobiles
 
 				if (AutoRenewInsurance)
 				{
-					int cost = (m_InsuranceAward == null ? insuredAmount : insuredAmount / 2);
+                    int cost = (m_InsuranceAward == null ? insuredAmount : insuredAmount / 2);
 
 					if (Banker.Withdraw(this, cost))
 					{
@@ -4515,6 +4531,9 @@ namespace Server.Mobiles
 
 			switch (version)
 			{
+                case 38:
+                    NextGemOfSalvationUse = reader.ReadDateTime();
+                    goto case 37;
                 case 37:
                     m_ExtendedFlags = (ExtendedPlayerFlag)reader.ReadInt();
 				    goto case 36;
@@ -4959,7 +4978,9 @@ namespace Server.Mobiles
 
 			base.Serialize(writer);
 
-			writer.Write(37); // version
+			writer.Write(38); // version
+
+            writer.Write((DateTime)NextGemOfSalvationUse);
 
             writer.Write((int)m_ExtendedFlags);
 
@@ -5290,7 +5311,7 @@ namespace Server.Mobiles
 					{
                         string cust = null;
 
-                        if ((int)m_RewardTitles[m_SelectedTitle] == 1154017 && Server.Engines.CityLoyalty.CityLoyaltySystem.HasCustomTitle(this, out cust))
+                        if ((int)m_RewardTitles[m_SelectedTitle] == 1154017 && CityLoyaltySystem.HasCustomTitle(this, out cust))
                         {
                             list.Add(1154017, cust); // ~1_TITLE~ of ~2_CITY~
                         }
@@ -5759,7 +5780,7 @@ namespace Server.Mobiles
 
                 if (loc > 0)
                 {
-                    if (Server.Engines.CityLoyalty.CityLoyaltySystem.ApplyCityTitle(this, list, prefix, loc))
+                    if (CityLoyaltySystem.ApplyCityTitle(this, list, prefix, loc))
                         return;
                 }
                 else if (suffix.Length > 0)

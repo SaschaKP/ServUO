@@ -74,13 +74,10 @@ namespace Server.Engines.Craft
 		public Expansion RequiredExpansion { get; set; }
         public ThemePack RequiredThemePack { get; set; }
 
-        #region SA
         public bool RequiresBasketWeaving { get; set; }
         public bool RequiresResTarget { get; set; }
         public bool RequiresMechanicalLife { get; set; }
-        #endregion
 
-        #region TOL
         private object m_Data;
         private int m_DisplayID;
 
@@ -95,7 +92,8 @@ namespace Server.Engines.Craft
             get { return m_DisplayID; }
             set { m_DisplayID = value; }
         }
-        #endregion
+
+        public int ForceSuccessChance { get; set; } = -1;
 
         public Func<Mobile, ConsumeType, int> ConsumeResCallback { get; set; }
 
@@ -356,14 +354,15 @@ namespace Server.Engines.Craft
 			0x19AA, 0x19BB, // Veteran Reward Brazier
 			0x197A, 0x19A9, // Large Forge 
 			0x0FB1, 0x0FB1, // Small Forge
-			0x2DD8, 0x2DD8 // Elven Forge
-		};
+			0x2DD8, 0x2DD8, // Elven Forge
+            0xA2A4, 0xA2A5, 0xA2A8, 0xA2A9 // Wood Stove
+        };
 
 		private static readonly int[] m_Ovens = new[]
 		{
 			0x461, 0x46F, // Sandstone oven
 			0x92B, 0x93F, // Stone oven
-			0x2DDB, 0x2DDC //Elven stove
+			0x2DDB, 0x2DDC, //Elven stove
 		};
 
         private static readonly int[] m_Makers = new[]
@@ -883,6 +882,12 @@ namespace Server.Engines.Craft
 				return false;
 			}
 
+            if (ourPack.TotalItems >= ourPack.MaxItems || ourPack.TotalWeight >= ourPack.MaxWeight)
+            {
+                message = 1048147; // Your backpack can't hold anything else.
+                return false;
+            }
+
             if (ConsumeResCallback != null)
             {
                 int resMessage = ConsumeResCallback(from, consumeType);
@@ -1057,7 +1062,7 @@ namespace Server.Engines.Craft
 				m_ResHue = 0;
 				m_ResAmount = 0;
 				m_System = craftSystem;
-                m_CaddelliteCraft = true;
+                CaddelliteCraft = true;
 
 				if (IsQuantityType(types))
 				{
@@ -1185,10 +1190,11 @@ namespace Server.Engines.Craft
         private int m_ClothHue;
 		private int m_ResAmount;
 		private CraftSystem m_System;
-        private bool m_CaddelliteCraft;
 
-		#region Plant Pigments
-		private PlantHue m_PlantHue = PlantHue.None;
+        public bool CaddelliteCraft { get; private set; }
+
+        #region Plant Pigments
+        private PlantHue m_PlantHue = PlantHue.None;
 		private PlantPigmentHue m_PlantPigmentHue = PlantPigmentHue.None;
 		#endregion
 
@@ -1221,9 +1227,9 @@ namespace Server.Engines.Craft
 				m_ResAmount = amount;
 			}
 
-            if (m_CaddelliteCraft && (!item.HasSocket<Caddellite>() || !Server.Engines.Points.PointsSystem.Khaldun.InSeason))
+            if (CaddelliteCraft && (!item.HasSocket<Caddellite>() || !Server.Engines.Points.PointsSystem.Khaldun.InSeason))
             {
-                m_CaddelliteCraft = false;
+                CaddelliteCraft = false;
             }
 		}
 
@@ -1320,6 +1326,11 @@ namespace Server.Engines.Craft
 		public double GetSuccessChance(
 			Mobile from, Type typeRes, CraftSystem craftSystem, bool gainSkills, ref bool allRequiredSkills)
 		{
+            if (ForceSuccessChance > -1)
+            {
+                return ((double)ForceSuccessChance / 100.0);
+            }
+
 			double minMainSkill = 0.0;
 			double maxMainSkill = 0.0;
 			double valMainSkill = 0.0;
@@ -1528,7 +1539,7 @@ namespace Server.Engines.Craft
 		{
 			int badCraft = craftSystem.CanCraft(from, tool, m_Type);
 
-			if (badCraft > 0)
+            if (badCraft > 0)
 			{
 				if (tool != null && !tool.Deleted && tool.UsesRemaining > 0)
 				{
@@ -1813,7 +1824,7 @@ namespace Server.Engines.Craft
                     m_PlantPigmentHue = PlantPigmentHue.None;
 					#endregion
 
-                    if (m_CaddelliteCraft)
+                    if (CaddelliteCraft)
                     {
                         Caddellite.TryInfuse(from, item, craftSystem);
                     }
@@ -1835,19 +1846,13 @@ namespace Server.Engines.Craft
                         from.AddToBackpack(item);
                     }
 
-                    if (tool is Item) // sanity check
-                    {
-                        EventSink.InvokeCraftSuccess(new CraftSuccessEventArgs(from, item, (Item)tool));
-                    }
+                    EventSink.InvokeCraftSuccess(new CraftSuccessEventArgs(from, item, tool is Item ? (Item)tool : null));
 
 					if (from.IsStaff())
 					{
 						CommandLogging.WriteLine(
 							from, "Crafting {0} with craft system {1}", CommandLogging.Format(item), craftSystem.GetType().Name);
 					}
-
-                    AutoCraftTimer.OnSuccessfulCraft(from);
-					//from.PlaySound( 0x57 );
 				}
 
                 tool.UsesRemaining--;
